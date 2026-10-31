@@ -143,9 +143,15 @@ function hookDialogs() {
   const coTaskMemAlloc = new NativeFunction(exp('ole32.dll', 'CoTaskMemAlloc'), 'pointer', ['size_t']);
   const fakePidls = new Set();
 
+  const ilCreateFromPath = new NativeFunction(exp('shell32.dll', 'ILCreateFromPathW'), 'pointer', ['pointer'], 'stdcall');
   Interceptor.replace(exp('shell32.dll', 'SHBrowseForFolderW'), new NativeCallback(function (bi) {
-    const pidl = coTaskMemAlloc(2);
-    pidl.writeU16(0); // empty ITEMIDLIST, freeable by CoTaskMemFree / IMalloc::Free
+    // A real PIDL of BROWSE_DIR, so the real SHGetPathFromIDListW also returns it: on Windows Server 2025 the
+    // original's import is forwarded past the shell32 export hooked below. Empty PIDL (= Desktop) only as fallback.
+    let pidl = ilCreateFromPath(Memory.allocUtf16String(BROWSE_DIR));
+    if (pidl.isNull()) {
+      pidl = coTaskMemAlloc(2);
+      pidl.writeU16(0);
+    }
     fakePidls.add(pidl.toString());
     emit({ ev: 'browse_folder', returned: BROWSE_DIR });
     return pidl;

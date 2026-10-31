@@ -87,6 +87,10 @@ Se reproducen a propósito estos comportamientos del original:
   - Corta el campo en 0xdaa, 0xe8c, 0xe8e, 0xf20, 0xf5e o 0xf60 unidades y agrega de 0 a 8 caracteres basura; el corte varía entre ejecuciones.
   - El port escribe el campo completo.
   - El harness compara exacto hasta 0xdaa unidades, el corte más temprano medido.
+  - Depende también de la versión de Windows. En Windows Server 2025, desde unas 0xeff unidades, el original omite la fila entera del CSV.
+- **Run length de 13–15 bytes:** pisa el byte bajo del Parser* guardado. Que el puntero corrupto haga caer al original depende de la dirección del heap.
+  - Con la misma entrada y el mismo SO, el original murió en 19 de 20 VMs y sobrevivió en 1.
+  - El port predice la caída, que es el resultado mayoritario.
 
 Las otras lecturas de memoria no inicializada (tmpHdr, frame y slots SYSTEMTIME nunca escritos) se leen como cero y están registradas como incógnitas en REA.
 

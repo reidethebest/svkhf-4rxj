@@ -1,5 +1,5 @@
-fuzz/
-re/bin/
-Journal Alternative/
+/fuzz/
+/re/bin/
+/Journal Alternative/
 __pycache__/
 *.pyc

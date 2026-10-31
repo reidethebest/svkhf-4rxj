@@ -13,6 +13,9 @@ on:
       only:
         description: optional --only filter for the generators (smoke tests)
         default: ""
+      locales:
+        description: comma list of user cultures (CP_THREAD_ACP), one job per seed x locale
+        default: "en-US"
 
 jobs:
   plan:
@@ -21,7 +24,7 @@ jobs:
       matrix: ${{ steps.m.outputs.matrix }}
     steps:
       - id: m
-        run: python3 -c "import json;n=int('${{ inputs.jobs }}');b=int('${{ inputs.base_seed }}');print('matrix='+json.dumps({'seed':[b+i for i in range(n)]}))" >> "$GITHUB_OUTPUT"
+        run: python3 -c "import json;n=int('${{ inputs.jobs }}');b=int('${{ inputs.base_seed }}');print('matrix='+json.dumps({'seed':[b+i for i in range(n)],'locale':[l.strip() for l in '${{ inputs.locales }}'.split(',') if l.strip()]}))" >> "$GITHUB_OUTPUT"
 
   fuzz:
     needs: plan
@@ -48,6 +51,12 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install frida==16.4.10 pywin32
+      - name: user locale (CP_THREAD_ACP of new processes)
+        shell: pwsh
+        run: |
+          Set-Culture ${{ matrix.locale }}
+          Set-WinUserLanguageList ${{ matrix.locale }} -Force
+          python -c "import ctypes;k=ctypes.windll.kernel32;print('user LCID',hex(k.GetUserDefaultLCID()),'thread LCID',hex(k.GetThreadLocale()),'ACP',k.GetACP())"
       - name: decrypt the original tool
         env:
           NLT_KEY: ${{ secrets.NLT_KEY }}
@@ -99,7 +108,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: seed-${{ matrix.seed }}
+          name: seed-${{ matrix.seed }}-${{ matrix.locale }}
           path: out/
           retention-days: 14
 

@@ -943,7 +943,13 @@ WEIRD = ["it's", "O'Brien's ''quoted''", "a,b,,c", '" no', "100%done", "%s%n%x%d
          # A lone surrogate as the LAST unit makes SQLite 3.7.3's UTF-16 reader swallow the closing quote of the
          # INSERT literal (spec 06, edge case 11); a high surrogate right before a quote swallows that quote.
          "end high\ud800", "end low\udc00", "\ud800", "q\ud800'x", "two\ud800\ud800", "max pair \U0010FFFF",
-         "\udfff\ud800 reversed", "comma\ud800,", "pct\ud800%s"]
+         "\udfff\ud800 reversed", "comma\ud800,", "pct\ud800%s",
+         # One name per ANSI code page family, so the CSV (CP_THREAD_ACP) is exercised under every locale:
+         # DBCS trail byte 0x5C (cp932 表, Big5 許/功, GBK 乗), half-width katakana, unmappable and private use.
+         "表示ソ能 ﾊﾝｶｸｶﾅ", "許功蓋 繁體", "简体乗丂 GBK", "한글 漢字 ㉠", "Русский ёЁ", "Українська ґЄ",
+         "Polski ąćęłńóśźż Čeština řů", "Türkçe ğışİ", "Lietuvių ėųū Latviešu āē", "العربية ـ", "ไทย ภาษา",
+         "Tiếng Việt ạầẫ", "ẹ̀ combining 1258", "Ελληνικά ΆΈ", "עברית ְׁ", "fullwidth ＡＢＣ１２３",
+         "pua ", "math \U0001D400 cjk-ext \U00020000", "€‚ƒ„…†‡ˆ‰Š‹Œ", "ſ ﬁ ﬀ ℃ ™ ½"]
 
 
 def act_weird_names(c):

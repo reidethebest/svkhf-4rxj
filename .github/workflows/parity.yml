@@ -56,7 +56,7 @@ jobs:
         run: |
           Set-Culture ${{ matrix.locale }}
           Set-WinUserLanguageList ${{ matrix.locale }} -Force
-          python -c "import ctypes;k=ctypes.windll.kernel32;print('user LCID',hex(k.GetUserDefaultLCID()),'thread LCID',hex(k.GetThreadLocale()),'ACP',k.GetACP())"
+          python -c "import ctypes;k=ctypes.windll.kernel32;b=ctypes.create_string_buffer(16);n=k.WideCharToMultiByte(3,0,chr(0x8868)+chr(0x0436),2,b,16,None,None);print('user LCID',hex(k.GetUserDefaultLCID()),'thread LCID',hex(k.GetThreadLocale()),'CP_THREAD_ACP bytes of U+8868 U+0436:',b.raw[:n].hex())"
       - name: decrypt the original tool
         env:
           NLT_KEY: ${{ secrets.NLT_KEY }}

@@ -1,0 +1,131 @@
+name: parity
+on:
+  workflow_dispatch:
+    inputs:
+      jobs:
+        description: parallel Windows jobs (one seed each)
+        default: "20"
+      base_seed:
+        default: "100"
+      families:
+        description: comma list of vhd, sem, mft
+        default: "vhd,sem,mft"
+      only:
+        description: optional --only filter for the generators (smoke tests)
+        default: ""
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.m.outputs.matrix }}
+    steps:
+      - id: m
+        run: python3 -c "import json;n=int('${{ inputs.jobs }}');b=int('${{ inputs.base_seed }}');print('matrix='+json.dumps({'seed':[b+i for i in range(n)]}))" >> "$GITHUB_OUTPUT"
+
+  fuzz:
+    needs: plan
+    runs-on: windows-latest
+    timeout-minutes: 340
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
+    env:
+      SEED: ${{ matrix.seed }}
+      FAMILIES: ${{ inputs.families }}
+      ONLY: ${{ inputs.only }}
+      PYTHONUTF8: "1"
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: ntfslog/go.mod
+          cache-dependency-path: ntfslog/go.sum
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install frida==16.4.10
+      - name: decrypt the original tool
+        env:
+          NLT_KEY: ${{ secrets.NLT_KEY }}
+        run: |
+          mkdir -p "Journal Alternative"
+          printf '%s' "$NLT_KEY" > key.txt
+          openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -in tool.enc -pass file:key.txt | tar --force-local -xf - -C "Journal Alternative"
+          rm key.txt
+          sha256sum -c tool.sha256
+      - name: build the port
+        run: cd ntfslog && go vet ./... && go test ./... && go build -o ../re/bin/ntfslog.exe ./cmd/ntfslog
+      - name: generate cases
+        run: |
+          o=(); [ -n "$ONLY" ] && o=(--only "$ONLY")
+          case ",$FAMILIES," in *,sem,*) python re/fuzz/gen_sem.py --seed "$SEED" "${o[@]}" ;; esac
+          case ",$FAMILIES," in *,mft,*) python re/fuzz/gen_mft.py --seed "$SEED" "${o[@]}" ;; esac
+          case ",$FAMILIES," in *,vhd,*) python re/fuzz/gen_vhd.py --seed "$SEED" --prefix "v$SEED" "${o[@]}" ;; esac
+          ls fuzz/cases | wc -l
+      - name: run original vs port
+        run: python re/fuzz/campaign.py --max-seconds 16200
+      - name: rerun harness errors once
+        if: always()
+        run: |
+          python - <<'PY'
+          import json, glob, os, shutil, subprocess, sys
+          for p in glob.glob("fuzz/results/*/verdict.json"):
+              v = json.load(open(p, encoding="utf-8"))
+              if v["verdict"] == "harness-error":
+                  shutil.rmtree(os.path.dirname(p), ignore_errors=True)
+                  subprocess.run([sys.executable, "re/fuzz/campaign.py", "--filter", v["case"]])
+          PY
+      - name: collect
+        if: always()
+        run: |
+          mkdir -p out/diverging
+          python - <<'PY'
+          import json, glob, os, shutil
+          rows = []
+          for p in sorted(glob.glob("fuzz/results/*/verdict.json")):
+              v = json.load(open(p, encoding="utf-8"))
+              rows.append({k: v.get(k) for k in ("case", "verdict", "oracle", "go", "first_diff", "oracle_deterministic", "go_detail")})
+              if not v["verdict"].startswith("match"):
+                  c = v["case"]
+                  shutil.copytree(os.path.join("fuzz", "cases", c), os.path.join("out", "diverging", c, "case"))
+                  shutil.copytree(os.path.dirname(p), os.path.join("out", "diverging", c, "results"))
+          json.dump(rows, open("out/verdicts.json", "w", encoding="utf-8"), indent=1)
+          print(len(rows), "cases")
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: seed-${{ matrix.seed }}
+          path: out/
+          retention-days: 14
+
+  report:
+    needs: fuzz
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: all
+      - run: |
+          python3 - <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
+          import json, glob, collections
+          c = collections.Counter(); bad = []
+          for p in sorted(glob.glob("all/*/verdicts.json")):
+              seed = p.split("/")[1]
+              for r in json.load(open(p, encoding="utf-8")):
+                  c[r["verdict"]] += 1
+                  if not r["verdict"].startswith("match"):
+                      bad.append(f"| {seed} | {r['case']} | {r['verdict']} | {r['oracle']} | {r['go']} | {r['first_diff']} |")
+          print("## Parity: %d cases\n" % sum(c.values()))
+          print("| verdict | cases |\n|---|---|")
+          for k, v in sorted(c.items()):
+              print(f"| {k} | {v} |")
+          if bad:
+              print("\n| seed | case | verdict | oracle | go | first diff |\n|---|---|---|---|---|---|")
+              print("\n".join(bad))
+          PY

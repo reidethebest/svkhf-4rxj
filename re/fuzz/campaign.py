@@ -13,6 +13,7 @@ verdict are skipped unless --rerun. --go-only re-checks the port against the sto
 Divergent cases get a second oracle run (oracle2) to tell nondeterminism in the original from port bugs.
 """
 import argparse
+import ctypes
 import json
 import msvcrt
 import re
@@ -20,6 +21,7 @@ import sqlite3
 import subprocess
 import sys
 import time
+from ctypes import wintypes
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -51,6 +53,24 @@ class OracleLock:
         self.f.close()
 
 
+def process_info(pid):
+    """(image path, creation time as Unix seconds) of a live process, or None. Win32 only, no external tools."""
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.OpenProcess.restype = wintypes.HANDLE
+    h = k32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+    if not h:
+        return None
+    try:
+        buf, n = ctypes.create_unicode_buffer(1024), wintypes.DWORD(1024)
+        times = [wintypes.FILETIME() for _ in range(4)]
+        if not k32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(n)) or                 not k32.GetProcessTimes(h, *[ctypes.byref(t) for t in times]):
+            return None
+        ft = times[0].dwHighDateTime << 32 | times[0].dwLowDateTime
+        return buf.value, ft / 1e7 - 11644473600
+    finally:
+        k32.CloseHandle(h)
+
+
 def kill_spawned(out):
     """Kill the original instance this run spawned (pid.txt), never any other process. PIDs are reused, so the PID
     must still name an NTFS Log Tracker process created within 30 s of pid.txt being written."""
@@ -61,13 +81,8 @@ def kill_spawned(out):
         return
     if not pid.isdigit():
         return
-    info = subprocess.run(["wmic", "process", "where", f"processid={pid}", "get", "name,creationdate",
-                           "/format:list"], capture_output=True, text=True).stdout
-    kv = dict(l.strip().split("=", 1) for l in info.splitlines() if "=" in l)
-    if not kv.get("Name", "").startswith("NTFS") or len(kv.get("CreationDate", "")) < 14:
-        return
-    created = time.mktime(time.strptime(kv["CreationDate"][:14], "%Y%m%d%H%M%S"))
-    if abs(created - written) < 30:
+    info = process_info(int(pid))
+    if info and Path(info[0]).name.startswith("NTFS") and abs(info[1] - written) < 30:
         subprocess.run(["taskkill", "/F", "/PID", pid], capture_output=True)
 
 

@@ -47,7 +47,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install frida==16.4.10
+      - run: pip install frida==16.4.10 pywin32
       - name: decrypt the original tool
         env:
           NLT_KEY: ${{ secrets.NLT_KEY }}

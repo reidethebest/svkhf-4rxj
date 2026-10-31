@@ -67,7 +67,7 @@ jobs:
           case ",$FAMILIES," in *,vhd,*) python re/fuzz/gen_vhd.py --seed "$SEED" --prefix "v$SEED" "${o[@]}" ;; esac
           ls fuzz/cases | wc -l
       - name: run original vs port
-        run: python re/fuzz/campaign.py --max-seconds 16200
+        run: sleep 35 && python re/fuzz/campaign.py --max-seconds 16200
       - name: rerun harness errors once
         if: always()
         run: |

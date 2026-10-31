@@ -68,11 +68,20 @@ def mask_csv(data, mask):
 
 
 def mask_long_fields(a, b, n):
-    """Cut both files' fields at n bytes wherever the candidate field has n or more bytes (lines aligned)."""
+    """Cut both files' fields at n bytes wherever the candidate field has n or more bytes (lines aligned).
+    A candidate row with such a field that the original's CSV lacks is dropped too: on Windows Server 2025 the
+    original omits the whole row once the dead-stack garbage reaches it (about 0xeff units), Windows 10 cuts it."""
     la, lb = a.split(b"\r\n"), b.split(b"\r\n")
-    if not n or len(la) != len(lb):
+    if not n:
         return a, b, 0
     count = 0
+    if len(la) != len(lb):
+        lsn = lambda l: l.split(b'","', 1)[0]
+        have = {lsn(l) for l in la}
+        keep = [l for l in lb if lsn(l) in have or not any(len(f) >= n for f in l.split(b'","'))]
+        count, lb = len(lb) - len(keep), keep
+        if len(la) != len(lb):
+            return a, b, 0
     for i, (x, y) in enumerate(zip(la, lb)):
         fx, fy = x.split(b'","'), y.split(b'","')
         if len(fx) != len(fy) or not any(len(f) >= n for f in fy):

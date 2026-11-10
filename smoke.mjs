@@ -14,6 +14,8 @@ let nextId = 0;
 const pending = new Map();
 const events = [];
 const errors = [];
+const requests = new Map();
+const failedLocal = [];
 
 function send(method, params = {}) {
   return new Promise((resolve, reject) => {
@@ -47,9 +49,12 @@ try {
     if (msg.id && pending.has(msg.id)) {
       const p = pending.get(msg.id); clearTimeout(p.timer); pending.delete(msg.id);
       msg.error ? p.reject(new Error(msg.error.message)) : p.resolve(msg.result);
+    } else if (msg.method === 'Network.requestWillBeSent') {
+      requests.set(msg.params.requestId, msg.params.request?.url || '');
     } else if (msg.method === 'Runtime.exceptionThrown') {
       errors.push(msg.params.exceptionDetails?.exception?.description || msg.params.exceptionDetails?.text || 'JavaScript exception');
     } else if (msg.method === 'Network.loadingFailed' || msg.method === 'Log.entryAdded') {
+      if (msg.method === 'Network.loadingFailed' && requests.get(msg.params.requestId)?.startsWith('file:')) failedLocal.push({ url: requests.get(msg.params.requestId), error: msg.params.errorText });
       events.push({ method: msg.method, params: msg.params });
     }
   });
@@ -62,6 +67,8 @@ try {
   if (state.ready !== 'complete' || state.text.length < 20) throw new Error(`Main page did not load: ${JSON.stringify(state)}`);
   if (/roomList\.html/i.test(state.url)) {
     if (!state.settings || !state.bridge || state.scriptCount < 15) throw new Error(`Room-list scripts did not finish loading: ${JSON.stringify(state)}`);
+    await evaluate(`(() => {document.querySelector('#cvn button')?.click();return true;})()`);
+    await wait(500);
     await evaluate(`(() => {let input=document.querySelector('#cvBvNick'); if(input){input.value='PruebaWindows';input.dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('#cvBvOk')?.click();} return true;})()`);
     await wait(1000);
     const settingsOpened = await evaluate(`(() => {document.querySelector('#bSettings')?.click();return true;})()`);
@@ -71,9 +78,11 @@ try {
     if (!after.trainingButtonReady) throw new Error(`Training action did not initialize: ${JSON.stringify(after)}`);
     state = { ...state, afterInteraction: after, settingsClickSent: settingsOpened };
   }
+  const unexpectedErrors = errors.filter(e => !/failed to fetch|networkerror|net::err_/i.test(e));
+  if (failedLocal.length || unexpectedErrors.length) throw new Error(`Local asset or JavaScript errors: ${JSON.stringify({ failedLocal, unexpectedErrors })}`);
   const screenshot = await send('Page.captureScreenshot', { format: 'png' });
   fs.writeFileSync(path.join(output, 'windows.png'), Buffer.from(screenshot.data, 'base64'));
-  const report = { startup: state, javascriptExceptions: errors, eventCount: events.length, events: events.slice(0, 30) };
+  const report = { startup: state, javascriptExceptions: errors, failedLocal, eventCount: events.length, events: events.slice(0, 30) };
   fs.writeFileSync(path.join(output, 'windows-smoke.json'), JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report));
 } catch (err) {

@@ -61,3 +61,45 @@ jobs:
           path: ${{ runner.temp }}/CerviApp-Directo/
           compression-level: 6
           retention-days: 7
+
+  package-experimental:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Prepare dependencies and verified inputs
+        shell: bash
+        run: |
+          npm ci --no-audit --no-fund
+          curl --fail --location --silent --show-error --output "$RUNNER_TEMP/setup.exe" 'https://github.com/cerviblood/cerviapp/releases/download/v1.9.19/CerviApp-Setup-1.9.19.exe'
+          curl --fail --location --silent --show-error --output "$RUNNER_TEMP/mobile.apk" 'https://raw.githubusercontent.com/cerviblood/Cerviapp-Mobile/9a040f259a5cc6f6197fea4d85c8632da693a677/CerviApp-Movil-42.apk'
+          echo "9f728d59e917beaeaea0634609666bc0c10a27528fa3fd2fdba33b63d1d62e7d  $RUNNER_TEMP/setup.exe" | sha256sum -c -
+          echo "de9e105b858a62236d347a6ef372f1a67116a5b0dcc3146fa93d1f20b1e0d60c  $RUNNER_TEMP/mobile.apk" | sha256sum -c -
+      - name: Assemble experimental portable version
+        shell: bash
+        run: |
+          set -e
+          seven="$GITHUB_WORKSPACE/node_modules/7zip-bin/linux/x64/7za"
+          chmod u+x "$seven"
+          set +e
+          "$seven" x -t7z "$RUNNER_TEMP/setup.exe" "-o$RUNNER_TEMP/CerviApp-Experimental" -y >/dev/null
+          status=$?
+          set -e
+          if [ "$status" -gt 1 ] || [ ! -f "$RUNNER_TEMP/CerviApp-Experimental/CerviApp.exe" ]; then exit 1; fi
+          "$seven" x -tzip "$RUNNER_TEMP/mobile.apk" 'assets/www/*' "-o$RUNNER_TEMP/mobile" -y >/dev/null
+          node rebuild.mjs "$RUNNER_TEMP/CerviApp-Experimental/resources/app.asar" "$RUNNER_TEMP/mobile/assets/www" "$RUNNER_TEMP/rebuilt.asar" "$RUNNER_TEMP/CerviApp-Experimental/recovery-report.json"
+          mv "$RUNNER_TEMP/rebuilt.asar" "$RUNNER_TEMP/CerviApp-Experimental/resources/app.asar"
+          cp README.txt "$RUNNER_TEMP/CerviApp-Experimental/LEEME.txt"
+      - name: Upload experimental portable application
+        uses: actions/upload-artifact@v4
+        with:
+          name: CerviApp-Experimental-sin-validar-Windows
+          path: ${{ runner.temp }}/CerviApp-Experimental/
+          compression-level: 6
+          retention-days: 7

@@ -1,0 +1,59 @@
+name: Build and check Windows version
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Install build dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Download and verify the published packages
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          curl.exe --fail --location --silent --show-error --output "$env:RUNNER_TEMP\setup.exe" 'https://github.com/cerviblood/cerviapp/releases/download/v1.9.19/CerviApp-Setup-1.9.19.exe'
+          if ($LASTEXITCODE -ne 0) { throw 'Desktop download failed' }
+          curl.exe --fail --location --silent --show-error --output "$env:RUNNER_TEMP\mobile.zip" 'https://raw.githubusercontent.com/cerviblood/Cerviapp-Mobile/9a040f259a5cc6f6197fea4d85c8632da693a677/CerviApp-Movil-42.apk'
+          if ($LASTEXITCODE -ne 0) { throw 'Mobile download failed' }
+          if ((Get-FileHash "$env:RUNNER_TEMP\setup.exe" -Algorithm SHA256).Hash.ToLowerInvariant() -ne '9f728d59e917beaeaea0634609666bc0c10a27528fa3fd2fdba33b63d1d62e7d') { throw 'Desktop installer hash mismatch' }
+          if ((Get-FileHash "$env:RUNNER_TEMP\mobile.zip" -Algorithm SHA256).Hash.ToLowerInvariant() -ne 'de9e105b858a62236d347a6ef372f1a67116a5b0dcc3146fa93d1f20b1e0d60c') { throw 'Mobile package hash mismatch' }
+      - name: Extract and rebuild
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $portable = Join-Path $env:RUNNER_TEMP 'CerviApp-Directo'
+          & 'C:\Program Files\7-Zip\7z.exe' x -t7z "$env:RUNNER_TEMP\setup.exe" "-o$portable" -y | Out-Null
+          if ($LASTEXITCODE -gt 1 -or -not (Test-Path "$portable\CerviApp.exe")) { throw 'Could not extract Windows application' }
+          Expand-Archive -Path "$env:RUNNER_TEMP\mobile.zip" -DestinationPath "$env:RUNNER_TEMP\mobile" -Force
+          node rebuild.mjs "$portable\resources\app.asar" "$env:RUNNER_TEMP\mobile\assets\www" "$env:RUNNER_TEMP\rebuilt.asar" "$portable\recovery-report.json"
+          if ($LASTEXITCODE -ne 0) { throw 'Rebuild failed' }
+          Move-Item "$env:RUNNER_TEMP\rebuilt.asar" "$portable\resources\app.asar" -Force
+          Copy-Item README.txt "$portable\LEEME.txt"
+      - name: Check application startup and menu
+        shell: pwsh
+        run: node smoke.mjs "$env:RUNNER_TEMP\CerviApp-Directo\CerviApp.exe" "$env:GITHUB_WORKSPACE\dist"
+      - name: Upload Windows test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-test-results
+          path: dist/
+          if-no-files-found: warn
+      - name: Upload portable application
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: CerviApp-Directo-Windows
+          path: ${{ runner.temp }}/CerviApp-Directo/
+          compression-level: 6
+          retention-days: 7

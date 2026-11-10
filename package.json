@@ -1,0 +1,12 @@
+{
+  "name": "cerviapp-recovery-build",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node rebuild.mjs"
+  },
+  "dependencies": {
+    "@electron/asar": "4.3.1"
+  }
+}

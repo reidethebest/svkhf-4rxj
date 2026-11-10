@@ -1,0 +1,81 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { spawn } from 'node:child_process';
+
+const [exe, output] = process.argv.slice(2);
+if (!output) throw new Error('Usage: node smoke.mjs CerviApp.exe output-directory');
+fs.mkdirSync(output, { recursive: true });
+const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+const proc = spawn(exe, ['--remote-debugging-port=9222', '--disable-gpu'], { windowsHide: true, stdio: 'ignore' });
+let socket;
+let nextId = 0;
+const pending = new Map();
+const events = [];
+const errors = [];
+
+function send(method, params = {}) {
+  return new Promise((resolve, reject) => {
+    const id = ++nextId;
+    const timer = setTimeout(() => { pending.delete(id); reject(new Error(`Timeout: ${method}`)); }, 15000);
+    pending.set(id, { resolve, reject, timer });
+    socket.send(JSON.stringify({ id, method, params }));
+  });
+}
+async function evaluate(expression) {
+  const result = await send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true });
+  if (result.exceptionDetails) throw new Error(result.exceptionDetails.text);
+  return result.result.value;
+}
+try {
+  let target;
+  for (let attempt = 0; attempt < 80; attempt++) {
+    if (proc.exitCode !== null) throw new Error(`Application exited with code ${proc.exitCode}`);
+    try {
+      const response = await fetch('http://127.0.0.1:9222/json/list');
+      const targets = await response.json();
+      target = targets.find(t => t.type === 'page' && t.webSocketDebuggerUrl && !t.url.startsWith('devtools:'));
+      if (target) break;
+    } catch {}
+    await wait(1000);
+  }
+  if (!target) throw new Error('No Electron page became available through the debugger.');
+  socket = new WebSocket(target.webSocketDebuggerUrl);
+  socket.addEventListener('message', ({ data }) => {
+    const msg = JSON.parse(data);
+    if (msg.id && pending.has(msg.id)) {
+      const p = pending.get(msg.id); clearTimeout(p.timer); pending.delete(msg.id);
+      msg.error ? p.reject(new Error(msg.error.message)) : p.resolve(msg.result);
+    } else if (msg.method === 'Runtime.exceptionThrown') {
+      errors.push(msg.params.exceptionDetails?.exception?.description || msg.params.exceptionDetails?.text || 'JavaScript exception');
+    } else if (msg.method === 'Network.loadingFailed' || msg.method === 'Log.entryAdded') {
+      events.push({ method: msg.method, params: msg.params });
+    }
+  });
+  await new Promise((resolve, reject) => { socket.addEventListener('open', resolve, { once: true }); socket.addEventListener('error', reject, { once: true }); });
+  await send('Page.enable'); await send('Runtime.enable'); await send('Network.enable'); await send('Log.enable');
+  await send('Page.reload', { ignoreCache: true });
+  await wait(12000);
+  let state = await evaluate(`(() => ({url:location.href,title:document.title,ready:document.readyState,text:(document.body?.innerText||'').slice(0,2000),settings:!!window.HBSettings,bridge:!!window.CerviBridge,scriptCount:document.scripts.length,nicknamePrompt:!!document.querySelector('#cvBienv')}))()`);
+  if (/activacion\.html/i.test(state.url) || /peg[aá].*key|activ[aá].*app/i.test(state.text)) throw new Error(`Unexpected activation screen: ${JSON.stringify(state)}`);
+  if (state.ready !== 'complete' || state.text.length < 20) throw new Error(`Main page did not load: ${JSON.stringify(state)}`);
+  if (/roomList\.html/i.test(state.url)) {
+    if (!state.settings || !state.bridge || state.scriptCount < 15) throw new Error(`Room-list scripts did not finish loading: ${JSON.stringify(state)}`);
+    await evaluate(`(() => {let input=document.querySelector('#cvBvNick'); if(input){input.value='PruebaWindows';input.dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('#cvBvOk')?.click();} return true;})()`);
+    await wait(1000);
+    const settingsOpened = await evaluate(`(() => {document.querySelector('#bSettings')?.click();return true;})()`);
+    await wait(1500);
+    const after = await evaluate(`(() => ({nickname:document.querySelector('#nickName')?.textContent||'',settingsVisible:!!document.querySelector('.hbs-overlay,.hbs-modal,.hbs-panel'),text:(document.body?.innerText||'').slice(0,3000)}))()`);
+    state = { ...state, afterInteraction: after, settingsClickSent: settingsOpened };
+  }
+  const screenshot = await send('Page.captureScreenshot', { format: 'png' });
+  fs.writeFileSync(path.join(output, 'windows.png'), Buffer.from(screenshot.data, 'base64'));
+  const report = { startup: state, javascriptExceptions: errors, eventCount: events.length, events: events.slice(0, 30) };
+  fs.writeFileSync(path.join(output, 'windows-smoke.json'), JSON.stringify(report, null, 2));
+  console.log(JSON.stringify(report));
+} catch (err) {
+  fs.writeFileSync(path.join(output, 'windows-smoke-failure.txt'), String(err.stack || err));
+  throw err;
+} finally {
+  if (socket) socket.close();
+  if (proc.exitCode === null) spawn('taskkill', ['/PID', String(proc.pid), '/T', '/F'], { stdio: 'ignore' });
+}

@@ -76,7 +76,10 @@ try {
     const after = await evaluate(`(() => {const o=document.querySelector('.hbs-overlay');return {nickname:document.querySelector('#nickName')?.textContent||'',settingsVisible:!!o&&!o.hidden&&getComputedStyle(o).display!=='none',trainingButtonReady:typeof document.querySelector('#bEntreno')?.onclick==='function',text:(document.body?.innerText||'').slice(0,3000)};})()`);
     if (!after.settingsVisible) throw new Error(`Settings did not open: ${JSON.stringify(after)}`);
     if (!after.trainingButtonReady) throw new Error(`Training action did not initialize: ${JSON.stringify(after)}`);
-    state = { ...state, afterInteraction: after, settingsClickSent: settingsOpened };
+    const sandboxGame = await evaluate(`(() => {try {const api=abcHaxballAPI(window,{noVariableValueChangeEvent:true});const room=api.Room.sandbox({},{controlledPlayerId:1});room.playerJoin(1,'Prueba','ar',null,'local','local');room.setPlayerTeam(1,1,0);room.startGame(0);const result={started:!!room.state?.gameState,players:room.state?.players?.length??null};room.stopGame(0);return result;}catch(e){return {error:String(e&&e.stack||e)};}})()`);
+    if (!sandboxGame.started || sandboxGame.players !== 1) throw new Error(`Sandbox game did not start: ${JSON.stringify(sandboxGame)}`);
+    const online = await evaluate(`(() => ({geoResolved:!!window.geo,roomCount:Array.isArray(window.roomList)?window.roomList.length:null,roomLabel:document.querySelector('#roomCount')?.textContent||''}))()`);
+    state = { ...state, afterInteraction: after, settingsClickSent: settingsOpened, sandboxGame, online };
   }
   const unexpectedErrors = errors.filter(e => !/failed to fetch|networkerror|net::err_/i.test(e));
   if (failedLocal.length || unexpectedErrors.length) throw new Error(`Local asset or JavaScript errors: ${JSON.stringify({ failedLocal, unexpectedErrors })}`);

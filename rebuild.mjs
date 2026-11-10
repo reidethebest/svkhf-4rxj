@@ -71,6 +71,17 @@ try {
   new vm.Script(ui, { filename: 'hb-settings.js' });
   fs.writeFileSync(settings, ui);
 
+  // The social service has its own server-side license requirement. Make
+  // that unavailable state explicit rather than asking for activation here.
+  const friendsPath = path.join(appDir, 'cervi-amigos.js');
+  let friends = fs.readFileSync(friendsPath, 'utf8');
+  friends = replaceExactlyOnce(friends,
+    "<b>Activá tu key</b>Para usar amigos necesitás tener CerviApp activada en esta PC.",
+    "<b>Amigos no disponible</b>El servidor de amigos requiere una licencia válida.",
+    'social-service unavailable message');
+  new vm.Script(friends, { filename: 'cervi-amigos.js' });
+  fs.writeFileSync(friendsPath, friends);
+
   fs.mkdirSync(path.dirname(dst), { recursive: true });
   if (fs.existsSync(dst)) throw new Error('Output ASAR already exists.');
   await createPackage(tmp, dst);

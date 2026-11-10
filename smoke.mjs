@@ -6,7 +6,9 @@ const [exe, output] = process.argv.slice(2);
 if (!output) throw new Error('Usage: node smoke.mjs CerviApp.exe output-directory');
 fs.mkdirSync(output, { recursive: true });
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
-const proc = spawn(exe, ['--remote-debugging-port=9222', '--disable-gpu'], { windowsHide: true, stdio: 'ignore' });
+const allowedEnv = ['PATH', 'Path', 'PATHEXT', 'SystemRoot', 'SYSTEMROOT', 'WINDIR', 'ComSpec', 'TEMP', 'TMP', 'APPDATA', 'LOCALAPPDATA', 'USERPROFILE', 'USERNAME', 'COMPUTERNAME', 'PROGRAMDATA', 'ProgramFiles', 'ProgramFiles(x86)'];
+const appEnv = Object.fromEntries(allowedEnv.filter(k => process.env[k] !== undefined).map(k => [k, process.env[k]]));
+const proc = spawn(exe, ['--remote-debugging-port=9222', '--remote-allow-origins=*', '--disable-gpu'], { windowsHide: true, stdio: 'ignore', env: appEnv });
 let socket;
 let nextId = 0;
 const pending = new Map();
@@ -33,7 +35,7 @@ try {
     try {
       const response = await fetch('http://127.0.0.1:9222/json/list');
       const targets = await response.json();
-      target = targets.find(t => t.type === 'page' && t.webSocketDebuggerUrl && !t.url.startsWith('devtools:'));
+      target = targets.find(t => t.type === 'page' && t.webSocketDebuggerUrl && t.url.startsWith('file:'));
       if (target) break;
     } catch {}
     await wait(1000);
@@ -64,7 +66,9 @@ try {
     await wait(1000);
     const settingsOpened = await evaluate(`(() => {document.querySelector('#bSettings')?.click();return true;})()`);
     await wait(1500);
-    const after = await evaluate(`(() => ({nickname:document.querySelector('#nickName')?.textContent||'',settingsVisible:!!document.querySelector('.hbs-overlay,.hbs-modal,.hbs-panel'),text:(document.body?.innerText||'').slice(0,3000)}))()`);
+    const after = await evaluate(`(() => {const o=document.querySelector('.hbs-overlay');return {nickname:document.querySelector('#nickName')?.textContent||'',settingsVisible:!!o&&!o.hidden&&getComputedStyle(o).display!=='none',trainingButtonReady:typeof document.querySelector('#bEntreno')?.onclick==='function',text:(document.body?.innerText||'').slice(0,3000)};})()`);
+    if (!after.settingsVisible) throw new Error(`Settings did not open: ${JSON.stringify(after)}`);
+    if (!after.trainingButtonReady) throw new Error(`Training action did not initialize: ${JSON.stringify(after)}`);
     state = { ...state, afterInteraction: after, settingsClickSent: settingsOpened };
   }
   const screenshot = await send('Page.captureScreenshot', { format: 'png' });

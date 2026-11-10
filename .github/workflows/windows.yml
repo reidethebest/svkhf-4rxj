@@ -1,8 +1,10 @@
 name: Build and check Windows version
+permissions:
+  contents: read
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, 'cervi-run-*']
 
 jobs:
   build:
@@ -10,6 +12,8 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '24'

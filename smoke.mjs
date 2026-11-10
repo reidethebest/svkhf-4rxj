@@ -16,6 +16,7 @@ const events = [];
 const errors = [];
 const requests = new Map();
 const failedLocal = [];
+const completedLocal = new Set();
 
 function send(method, params = {}) {
   return new Promise((resolve, reject) => {
@@ -51,6 +52,9 @@ try {
       msg.error ? p.reject(new Error(msg.error.message)) : p.resolve(msg.result);
     } else if (msg.method === 'Network.requestWillBeSent') {
       requests.set(msg.params.requestId, msg.params.request?.url || '');
+    } else if (msg.method === 'Network.loadingFinished') {
+      const url = requests.get(msg.params.requestId);
+      if (url?.startsWith('file:')) completedLocal.add(url);
     } else if (msg.method === 'Runtime.exceptionThrown') {
       errors.push(msg.params.exceptionDetails?.exception?.description || msg.params.exceptionDetails?.text || 'JavaScript exception');
     } else if (msg.method === 'Network.loadingFailed' || msg.method === 'Log.entryAdded') {
@@ -82,10 +86,11 @@ try {
     state = { ...state, afterInteraction: after, settingsClickSent: settingsOpened, sandboxGame, online };
   }
   const unexpectedErrors = errors.filter(e => !/failed to fetch|networkerror|net::err_/i.test(e));
-  if (failedLocal.length || unexpectedErrors.length) throw new Error(`Local asset or JavaScript errors: ${JSON.stringify({ failedLocal, unexpectedErrors })}`);
+  const unresolvedLocal = failedLocal.filter(item => !(item.error === 'net::ERR_ABORTED' && completedLocal.has(item.url)));
+  if (unresolvedLocal.length || unexpectedErrors.length) throw new Error(`Local asset or JavaScript errors: ${JSON.stringify({ unresolvedLocal, unexpectedErrors })}`);
   const screenshot = await send('Page.captureScreenshot', { format: 'png' });
   fs.writeFileSync(path.join(output, 'windows.png'), Buffer.from(screenshot.data, 'base64'));
-  const report = { startup: state, javascriptExceptions: errors, failedLocal, eventCount: events.length, events: events.slice(0, 30) };
+  const report = { startup: state, javascriptExceptions: errors, unresolvedLocal, cancelledOnReload: failedLocal.length - unresolvedLocal.length, eventCount: events.length, events: events.slice(0, 30) };
   fs.writeFileSync(path.join(output, 'windows-smoke.json'), JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report));
 } catch (err) {
